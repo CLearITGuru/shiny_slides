@@ -1,0 +1,115 @@
+---
+title: "COVID-19 7-day rolling average Case Fatality Ratio"
+output: 
+  flexdashboard::flex_dashboard:
+    vertical_layout: fill
+    orientation: rows
+---
+
+```{r packages}
+pacman::p_load(
+  "officer", "tidyverse",
+  "assertr", "forcats", "Cairo", "grid", "gridExtra",
+  "rvg", "glue", "lubridate", "here", "janitor", "withr",
+   "plotly", "tidycovid19","zoo")
+```
+
+```{r getdata, echo=FALSE, warning=FALSE}
+
+jhu_state_county <- download_jhu_csse_covid19_data(
+  cached = TRUE,
+  type = "us_county") %>%
+  filter(
+    state == "District of Columbia",
+    county == "District of Columbia")
+```
+
+```{r formatdata, echo=FALSE, warning=FALSE}
+
+formatted_data <- jhu_state_county %>%
+  mutate(
+    date_rep = lubridate::ymd(date),
+    deaths = as.numeric(deaths),
+    new_deaths = deaths - lag(deaths),
+    avg_new_deaths = rollmean(new_deaths, 7, na.pad = TRUE, align = "right"),
+    confirmed = as.numeric(confirmed),
+    CFR = round_half_up(as.numeric((deaths / confirmed)*100), 3),
+    rolling7_CFR = rollmean(CFR, 7, na.pad = TRUE, align = "right")) %>%
+  drop_na(CFR) %>%
+  filter(rolling7_CFR != "NaN")
+
+```
+
+```{r cfrgraph, echo=FALSE, warning=FALSE}
+
+# default theme
+default_theme <- hrbrthemes::theme_ipsum(grid = "Y") +
+  theme(
+    axis.text.x = element_text(size = rel(1.5), angle = 45, hjust = 1),
+    panel.grid.major.x = element_line(
+      color = "grey",
+      linetype = "dashed"),
+    axis.title.y = element_text(size = rel(1.5), hjust = 0.5, face = "bold"),
+    axis.text.y = element_text(size = rel(1.5)),
+    axis.title.x = element_text(size = rel(1.5), hjust = 0.5, face = "bold"),
+    plot.title = element_text(hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5),
+    strip.placement = "outside",
+    strip.background = element_rect(fill = "white", color = "white")) +
+  theme(legend.text = element_text(size = rel(1.2)))
+
+cfr_plot <- formatted_data %>%
+  ggplot(.,
+    aes(x = date_rep)) +
+  geom_line(aes(y = rolling7_CFR), color = "red") +
+  default_theme +
+  labs(x = "Date",
+       y = "7-Rolling average CFR") +
+  scale_y_continuous(limits = c(0, 100.0)) +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b-%y") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+```{r dml, echo=FALSE}
+
+# obtain most recent week's date range
+all_dates <- formatted_data %>%
+  select(state, county, date) %>%
+  distinct() %>%
+  mutate(date_formatted = format(date, format = "%B %d, %Y"))
+
+most_recent_day <- all_dates %>%
+  tail(1)
+
+slide_dml <- dml(grid.arrange(cfr_plot,
+  nrow = 1, widths = 6.5,
+  top = textGrob(
+    glue("{county} County, {state}
+             {first_date} - {most_recent_date}",
+      county = as.character(all_dates$county[1]),
+      state = as.character(all_dates$state[1]),
+      first_date = as.character(all_dates$date_formatted[1]),
+      most_recent_date = as.character(most_recent_day$date_formatted[1]),
+      big.mark = ","),
+    gp = gpar(
+      fontsize = 20))))
+```
+
+```{r slides, echo=FALSE}
+
+slide_template <- read_pptx(path = inputs$templates$template_one)
+
+slide_complete <- ph_with(slide_template, slide_dml,
+  location = ph_location(
+    left = 0.5,
+    top = 2.0,
+    width = 12.5,
+    height = 4.55,
+    newlabel = ""))
+
+output <- list(
+  slide_complete_output = glue(here("files/output/JHU_COVID_updated_{most_recent_day$date[1]}_CFR.pptx")))
+
+print(slide_complete,
+  target = output$slide_complete_output)
+```

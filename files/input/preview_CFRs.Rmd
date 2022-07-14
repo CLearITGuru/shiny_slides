@@ -1,0 +1,80 @@
+---
+title: "COVID-19 7-day rolling average Case Fatality Ratio"
+output: 
+  flexdashboard::flex_dashboard:
+    vertical_layout: fill
+    orientation: rows
+---
+```{r packages}
+pacman::p_load(
+  "tidyverse", "assertr", "forcats", 
+  "glue", "lubridate", "here", 
+  "janitor", "tidycovid19", "zoo")
+```
+
+```{r getdata, echo=FALSE, warning=FALSE}
+
+# todo: add the state and county as user inputs in the app
+jhu_state_county <- download_jhu_csse_covid19_data(
+  cached = TRUE,
+  type = "us_county") %>%
+  filter(
+    state == "District of Columbia",
+    county == "District of Columbia")
+
+```
+
+```{r formatdata, echo=FALSE, warning=FALSE}
+
+formatted_data <- jhu_state_county %>%
+  mutate(
+    date_rep = lubridate::ymd(date),
+    fmtd_date = format(as.POSIXct(date_rep), "%B, %Y"),
+    date_sort = row_number(),
+    deaths = as.numeric(deaths),
+    new_deaths = deaths - lag(deaths),
+    avg_new_deaths = rollmean(new_deaths, 7, na.pad = TRUE, align = "right"),
+    confirmed = as.numeric(confirmed),
+    CFR = round_half_up(as.numeric((deaths / confirmed)*100), 3),
+    rolling7_CFR = rollmean(CFR, 7, na.pad = TRUE, align = "right")) %>%
+  drop_na(CFR) %>%
+  filter(rolling7_CFR != "NaN") %>%
+  arrange(date_sort)
+
+```
+
+```{r cfrgraph, echo=FALSE, warning=FALSE}
+
+default_theme <- hrbrthemes::theme_ipsum(grid = "Y") +
+  theme(
+    axis.text.x = element_text(size = rel(1.5), angle = 45, hjust = 1),
+    panel.grid.major.x = element_line(
+      color = "grey",
+      linetype = "dashed"),
+    axis.title.y = element_text(size = rel(1.5), hjust = 0.5, face = "bold"),
+    axis.text.y = element_text(size = rel(1.5)),
+    axis.title.x = element_text(size = rel(1.5), hjust = 0.5, face = "bold"),
+    plot.title = element_text(hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5),
+    strip.placement = "outside",
+    strip.background = element_rect(fill = "white", color = "white")) +
+  theme(legend.text = element_text(size = rel(1.2)))
+
+cfr_plot <- formatted_data %>%
+  ggplot(.,
+    aes(x = date_rep)) +
+  geom_line(aes(y = rolling7_CFR), color = "red") +
+  default_theme +
+  labs(x = "Date",
+       y = "7-Day avg CFR",
+       title = glue("7-Day Average Case Fatality Ratio (CFR) 
+                    {formatted_data$county[1]}, {formatted_data$state[1]}"), 
+       subtitle = glue("From {first(formatted_data$fmtd_date)} to {last(formatted_data$fmtd_date)}")) +
+  scale_y_continuous(limits = c(0, 100.0)) +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b-%y") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+cfr_plot
+
+```
+
